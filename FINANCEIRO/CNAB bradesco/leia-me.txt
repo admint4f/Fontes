@@ -1,0 +1,15 @@
+Colocar dentro da pasta system do Protheus:
+
+bradesco.2pe -> para tributos
+bradfor      -> para pagamento de fornecedores, boletos e TED
+
+Compilar os fontes:
+RFINE001
+RFINE002
+
+
+Deletar todos os registros da tabela SEE onde o campo EE_CODIGO = '237' e appendar os arquivos da tabela de parametros conforme sua empresa ONDE SEE_EMPRESA
+SEE_08 (da empresa 08....e assim por diante)
+
+
+As contas dos bancos: SA6 precisam estar preenchidas corretamente com o campo digito separado e preenchido em seu respectivo campo conforme alinhado anteriormente

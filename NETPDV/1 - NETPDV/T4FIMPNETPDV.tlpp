@@ -1,0 +1,494 @@
+#INCLUDE "TOTVS.ch"
+#DEFINE ENTER Chr(13)+Chr(10)
+
+/*/{Protheus.doc} T4FIMPNETPDV
+Parametros para requisição de listagem de transações NetPDV
+@type function
+@author Joalisson Laurentino
+@since 11/03/2022
+/*/
+User Function T4FIMPNETPDV(aParams)
+    Local aArea 	:= FwGetArea()
+	Local oLayer    := FWLayer():new()
+	Local oMainColl := Nil
+	Local oModal	:= Nil
+	Local dDataIni  := Date()
+	Local dDataFim  := Date()
+	Local cHoraIni  := "00:00"
+	Local cHoraFim  := "23:59"
+	Local cEvento	:= ""
+	Local oDataIni  := Nil
+	Local oDataFim  := Nil
+	Local oEvento   := Nil
+	Local bVldData  := {|| IIf(Empty(oDataIni:GetValue()) .OR. Empty(oDataFim:GetValue()),.T.,oDataIni:GetValue() <= oDataFim:GetValue())}
+	Local bVldHora  := {|| IIf(Empty(oHoraIni:GetValue()) .OR. Empty(oHoraFim:GetValue()),.T.,oHoraIni:GetValue() < oHoraFim:GetValue())}
+    
+	Private lLogado  := Type('cEmpAnt') == 'C'
+    
+    Default aParams  := {"20","01"}
+			
+	If !lLogado
+		RPCSetType(3)
+		
+		If RPCSetEnv(aParams[1],aParams[2])
+			cEmpAnt := aParams[1] 
+			cFilAnt := aParams[2]
+			
+			cEvento:= SuperGetMv("ES_EVTNETP",.F.,"11254") 
+
+			cHoraAtu:= time()
+			nHora	:= Val(SUBSTR(cHoraAtu,1,2))
+			IF nHora == 0
+				cHoraIni:= "23:00"
+				cHoraFim:= "23:59"
+				dDataIni:= date()-1
+				dDataFim:= date()-1
+			ELSE
+				cHoraIni:= PadL(cValtoChar(nHora-1),2,'0')+":00"
+				cHoraFim:= PadL(cValtoChar(nHora-1),2,'0')+":59"
+			ENDIF
+			PostTransacoes(,,lLogado,dDataIni,dDataFim,cHoraIni,cHoraFim,cEvento)
+		Endif 
+    Else
+		cEvento:= SuperGetMv("ES_EVTNETP",.F.,"11254") 
+
+		oModal := FWDialogModal():New()
+		oModal:SetFreeArea(160,130)
+		oModal:SetEscClose(.F.)    // Não permite fechar a tela com o ESC
+		oModal:SetCloseButton(.F.) // Não permite fechar a tela com o "X"
+		oModal:SetBackground(.T.)  // Escurece o fundo da janela
+		oModal:SetTitle("Importação de Transações NetPDV") 
+		oModal:setSubTitle("Informe as datas para Filtrar.")
+		oModal:CreateDialog()
+		oModal:AddOkButton({|| FWMsgRun(,{|| xFWGridProcess(lLogado,oDataIni:GetValue(),oDataFim:GetValue(),oHoraIni:GetValue(),oHoraFim:GetValue(),oEvento:GetValue()) },"Aguarde...","Importando Transações NetPDV..."),oModal:oOwner:End() })
+
+		oModal:AddCloseButton({|| oModal:oOwner:End()})
+
+		oLayer:Init(oModal:GetPanelMain(),.F.)
+		oLayer:AddCollumn("MainColl",100,.F.)
+		oMainColl := oLayer:GetColPanel("MainColl")
+
+		oDataIni  := TJurPnlCampo():New(010,010,060,022,oMainColl,"Data Inicial",("NYX_DATAIM"),{|| },{|| },dDataIni,,,) // "Data Inicial"
+		oHoraIni  := TJurPnlCampo():New(010,085,060,022,oMainColl,"Hora Inicial",("NYX_HORAIM"),{|| },{|| },cHoraIni,,,) // "Hora Inicial"
+		oDataIni:SetValid(bVldData)
+		oHoraIni:SetValid(bVldHora)
+
+		oDataFim  := TJurPnlCampo():New(040,010,060,022,oMainColl,"Data Final",("NYX_DATAIM"),{|| },{|| },dDataFim,,,) // "Data Final"
+		oHoraFim  := TJurPnlCampo():New(040,085,060,022,oMainColl,"Hora Final",("NYX_HORAIM"),{|| },{|| },cHoraFim,,,) // "Hora Final"
+		oDataFim:SetValid(bVldData)
+		oHoraFim:SetValid(bVldHora)
+
+		oEvento  := TJurPnlCampo():New(070,010,060,022,oMainColl,"Cod. Evento",,{|| },{|| },cEvento,,,)
+
+		oModal:Activate()
+    EndIf
+
+	If !lLogado
+		RpcClearEnv()
+	EndIf
+
+    FwrestArea(aArea)
+Return()
+
+Static Function xFWGridProcess(lLogado,dDataIni,dDataFim,cHoraIni,cHoraFim,cEvento)
+	Local cTitulo	 := "Integração NetPDV x Protheus"
+    Local cDescricao := "Realiza a importação Transações de Vendas."
+    Local lEnd		 := .F.
+	Local nMaxThread := SuperGetMV("TF4_MAXGRD",.F.,30)
+	Local oGrid	 	 := Nil
+
+	oGrid := FWGridProcess():New("T4FIMPNETPDV",cTitulo,cDescricao,{|lEnd| PostTransacoes(oGrid,lEnd,lLogado,dDataIni,dDataFim,cHoraIni,cHoraFim,cEvento)},/*cPergunta*/,"U_TF4CallNetPDV",/*lSaveLog*/)
+	oGrid:SetThreadGrid(1)
+	oGrid:SetMaxThreadGrid(nMaxThread)
+	oGrid:SetMeters(2)
+	oGrid:Activate()
+	If oGrid:IsFinished()
+		FWAlertSuccess("Importação finalizada com sucesso!", "Sucesso!")
+	Else
+		FWAlertError("Erro ao realizar Importação!","Error!")
+	EndIf
+	oGrid:DeActivate()
+	FwFreeObj(oGrid)
+Return
+
+/*/{Protheus.doc} PostTransacoes
+Processa requisição de listagem de transações NetPDV
+@type function
+@author Joalisson Laurentino
+@since 12/03/2022
+/*/
+Static Function PostTransacoes(oGrid,lEnd,lLogado,dDataIni,dDataFim,cHoraIni,cHoraFim,cEvento)
+	
+	Local nDias		 := 1
+	Local cIDtoken	 := ""
+	Local dDataRef	 := Date()
+	
+	Default	oGrid	 := Nil
+	Default	lEnd	 := .F.
+	Default	lLogado	 := .F.
+	Default	dDataIni := Date()
+	Default	dDataFim := Date()
+	Default cHoraIni   := SuperGetMV("TF4_HRINI",.F.,"00:00")
+	Default cHoraFim   := SuperGetMV("TF4_HRFIM",.F.,"23:59")
+	Default	cEvento	 := SuperGetMv("ES_EVTNETP",.F.,"11254") 
+
+	cIDtoken := TokenNetPDV(cEvento)
+
+	dDataRef := dDataIni
+	dDtFim   := dDataFim
+	cHoraRef := cHoraIni
+	cHrFim	 := cHoraFim
+	n:= 1
+	
+	If lLogado
+		oGrid:SetIncMeter(1,"Processando dia "+DTOC(dDataRef)+" | Hora " + cHrFim)
+		oGrid:SetMaxMeter(300,2)
+	Else 
+		FWLogMsg("INFO", "", "", "T4FIMPNETPDV.tlpp", "", "","Processando dia "+DTOC(dDataRef)+" " + cHrFim, 0, 0)
+	EndIf
+	
+	lExec:= .T.
+	While lExec
+		acreHrs(@cHoraRef,@cHrFim,@dDataRef,@dDtFim,n)
+		IF (dDataRef >= dDataFim)
+			IF (cHrFim >= cHoraFim) 
+				lExec:= .F.
+			ENDIF
+		ENDIF
+		If lLogado
+			oGrid:SetIncMeter(2,"Processando Hora Inicial: "+cHoraRef+" | Hora Final: "+cHrFim)
+			oGrid:CallExecute(dDataRef,dDtFim,cHoraRef,cHrFim,cEvento,cIDtoken)
+		ELSE
+			U_TF4CallNetPDV(dDataRef,dDtFim,cHoraRef,cHrFim,cEvento,cIDtoken)
+		ENDIF
+		n++
+			
+	EndDo
+	nDias++
+		
+	
+Return
+
+
+Static Function acreHrs(cHoraRef,cHrFim,dDataRef,dDtFim,n)
+
+nMinAcres:= 10 // tempo a acrescentar em minutos
+
+IF n > 1
+	cHoraRef:= cHrFim
+	dDataRef:= dDtFim
+else
+	dDtFim:= dDataRef	
+	cHoraRef:= cHoraRef+":00"	
+ENDIF
+
+nHora:= Val(SubStr(cHoraRef, 1, 2))
+nMin:= Val(SubStr(cHoraRef, 4, 2))
+nMincalc:= nMin+nMinAcres
+
+IF nMincalc >= 60
+	nMincalc:= nMincalc-60
+	nHora++
+ENDIF
+
+IF nHora >= 24
+	nHora:= nHora-24
+	dDtFim:= DaySum(dDataRef,1)
+ENDIF
+
+
+cHrFim:= PadL(cValtoChar(nHora),2,'0')+":"+PadL(cValtoChar(nMincalc),2,'0')+":59"
+
+Return
+
+User Function TF4CallNetPDV(dDataRef,dDtFim,cHoraRef,cHoraFim,cEvento,cIDtoken)
+    Local aArea 	 := FwGetArea()
+	Local oTransacoes:= Nil
+	Local lTokenOk  := .T.
+	Local cBodyParam := "" 
+	Local cMsgErro	 := ""
+	Local aListagem  := {}
+	Local aHeader	 := {}
+	Local nY		 := 0
+	Local nZ		 := 0
+	Local nReg		 := 0
+	Local nProd		 := 0
+	Local cAliasQry	 := ""
+	Local cSetPath 	 := SuperGetMV("TF4_APITRN",.F.,"/api/relatorios/ListaTransacoes")
+	Local nTamPrd   := TamSx3("B1_COD")[1]
+	Local cCliPad 	:= SuperGetMV("MV_CLIPAD")      // Cliente Padrao
+	Local cLojPad	:= SuperGetMV("MV_LOJAPAD")     // Loja Padrao
+	Local aFields := {}
+	Local oTempTable
+
+	DEFAULT cIDPDVNULL:=""
+	//Body Requisição: ListaTransacoes
+    oBody := JsonObject():New()
+	oBody["data_inicio"] := FwTimeStamp(5,dDataRef,cHoraRef) 
+	oBody["data_fim"]    := FwTimeStamp(5,dDtFim,cHoraFim)
+
+    cBodyParam  := EncodeUTF8(oBody:ToJson())
+
+	aAdd(aHeader,'token_acesso: '+cIDtoken)
+	
+	aListagem := U_T4FFWRestNetPDV("POST",/*cUrl*/,cSetPath,cBodyParam,aHeader)
+
+	If aListagem[1]
+		oListagem := aListagem[2]
+
+		If oListagem["codigo_retorno"] > 0
+			lTokenOk  := .F.
+			cMsgErro := "Cod. Retorno: "+cValtoChar(oListagem["codigo_retorno"])+" - "+AllTrim(oListagem["mensagem_erro"])+cBodyParam
+			//FWLogMsg("ERROR", "", "", "T4FIMPNETPDV.tlpp", "", "",cMsgErro, 0, 0)
+			Conout(cMsgErro)
+		EndIf
+
+		If lTokenOk
+			If aScan(oListagem["dados"]:GetNames(),"transacoes") > 0
+				oTransacoes := oListagem["dados"]["transacoes"]
+
+				nReg := Len(oTransacoes)
+
+				For nY := 1 To nReg
+
+					cIDTrasacao  := cValToChar(oTransacoes[nY]["transacao_id"])
+
+					cQry:= "SELECT ZZX_IDPDV from "+retsqlname("ZZX")+" where D_E_L_E_T_ <> '*' "
+					cQry+= " AND ZZX_IDPDV = '"+PadR(cIDTrasacao,TamSX3("ZZX_IDPDV")[1])+"'"
+					cQry+= " AND ZZX_IDEVEN = '"+PadR(cEvento,TamSX3("ZZX_IDEVEN")[1])+"'"
+					cAliasQry := MPSysOpenQuery(ChangeQuery(cQry))
+
+					(cAliasQry)->(dbgotop())
+					IF (cAliasQry)->(!EOF())
+						(cAliasQry)->(DBCLOSEAREA())
+						Loop
+					EndIf
+					(cAliasQry)->(DBCLOSEAREA())
+
+					
+					sJson := FwNoAccent(DecodeUTF8(oTransacoes[nY]:ToJson(), "cp1252"))
+					//sJson := EncodeUTF8(oTransacoes[nY]:ToJson())
+
+					cCodEvento := cValToChar(oTransacoes[nY]["codigo_evento"])
+					cNmEvento  := Upper(FwNoAccent(DecodeUtf8(oTransacoes[nY]["nome_evento"])) )
+					cIDTrasacao  := cValToChar(oTransacoes[nY]["transacao_id"])
+					cIDTransOrig := cValToChar(oTransacoes[nY]["transacao_original_id"])
+					cOperacao  := Upper(FwNoAccent(DecodeUtf8(oTransacoes[nY]["operacao"])))
+					cDocCli    := cValToChar(oTransacoes[nY]["documento_cliente"])
+					cStatus    := Upper(FwNoAccent(DecodeUtf8(oTransacoes[nY]["status"])))
+					dDataVenda := SToD(StrTran(SubStr(oTransacoes[nY]["data_hora_realizacao"],1,10),'-',''))
+					cHoraVenda := SubSTr(oTransacoes[nY]["data_hora_realizacao"],12,5)
+					nTotVlr      := oTransacoes[nY]["valor"]
+
+					IF !(cStatus == "EFETIVADA")
+						loop
+					ENDIF
+					
+					IF !(cOperacao == "CONSUMO CASHLESS" )
+						//gravar operações que nao sejam de consumo
+						nZ:=1
+						cMsg:= ""
+						
+						RecLock("ZZX", .T.)
+							ZZX->ZZX_FILIAL     := xFilial("ZZX")
+							ZZX->ZZX_IDEVEN		:= cCodEvento
+							ZZX->ZZX_NMEVEN 	:= cNmEvento
+							ZZX->ZZX_OPERAC		:= cOperacao
+							ZZX->ZZX_IDPDV      := cIDTrasacao
+							ZZX->ZZX_DATA       := dDataVenda 
+							ZZX->ZZX_HORA		:= cHoraVenda
+							ZZX->ZZX_CPF        := cDocCli
+							ZZX->ZZX_ITEM       := STRZERO(nZ,2)
+							ZZX->ZZX_QUANT      := 1
+							ZZX->ZZX_VLUNIT     := nTotVlr
+							ZZX->ZZX_TOTAL      := nTotVlr
+							ZZX->ZZX_INTEGR    	:= "N"
+							ZZX->ZZX_STATUS     := "A"
+							ZZX->ZZX_JSON		:= sJson 
+							ZZX->ZZX_MSG        := cMsg
+							ZZX->ZZX_DTIMPO		:= date()
+							ZZX->ZZX_HRIMPO		:= time()		
+						MsUnlock()
+					ELSE
+						
+						oTransacao := JsonObject():New()
+						oTransacao := oTransacoes[nY]
+						
+
+						If ValType(oTransacao) == "J"
+							
+							cEmailCli   := UPPER(Alltrim(oTransacao["email_cliente"]))
+							cOperador	:= cValToChar(oTransacao["operador"])
+							cCodPonto	:= cValToChar(oTransacao["codigo_ponto"])
+							nTotVlr     := nTotVlr*-1
+
+							If Empty(cIDTransOrig)
+								/*
+								If !Empty(cDocCli)
+									
+								Else
+									cCodCli := SuperGetMV("MV_CLIPAD")      // Cliente Padrao
+									cLojaCli:= SuperGetMV("MV_LOJAPAD")     // Loja Padrao
+								EndIf
+								*/
+
+								oProdutos := oTransacao['produtos']
+								If ValType(oTransacao["produtos"]) == "A"
+									nProd   := Len(oProdutos)
+									cLogMsg := ""
+									For nZ := 1 To nProd
+										cStatus  := " "
+										cIntegra := "N"
+										cMsgErro := ""
+										cDoc	 := ""
+										cGeraOP	 := "N"
+
+										nVlrUnit := oProdutos[nZ]["valor_unitario"]
+										cCatPRD  := Upper(FwNoAccent(DecodeUtf8(oProdutos[nZ]["categoria_produto"])))
+										nQtdPrd  := oProdutos[nZ]["quantidade"]
+										cProduto := PadR(cValToChar(oProdutos[nZ]["cod_produto"]),nTamPrd)
+										nVlrTot  := oProdutos[nZ]["valor_total"]
+										cDescPRD := Upper(FwNoAccent(DecodeUtf8(oProdutos[nZ]["produto"])))
+
+										/*DbSelectArea("ZZW")
+										ZZW->(DbSetOrder(1))
+										If ZZW->(DbSeek(PadR(cProduto,TamSx3("ZZW_PRDDE")[1])))
+											cProduto := PadR(AllTrim(ZZW->ZZW_PRDPAR),nTamPrd)
+											cIntegra	:= "S"
+											cStatZZX    := "0"
+											cMsg	:= ""
+										ELSE
+											cStatZZX   := "A"
+											cMsg:= "Não existe DePara"
+											
+										ENDIF*/
+										
+										cQryProd:= "SELECT ZZW.ZZW_PRDDE PRODDE,ZZW_PRDPAR PRODPARA, " 
+										cQryProd+= " CASE WHEN (SELECT SG1.G1_COD FROM SIGA.SG1200 SG1 WHERE SG1.D_E_L_E_T_  <> '*' "
+										cQryProd+= " AND ZZW.ZZW_PRDPAR = SG1.G1_COD GROUP BY G1_COD) IS NULL THEN 'N' ELSE 'S' END 
+										cQryProd+= " ESTRUT FROM SIGA.ZZW200 ZZW WHERE ZZW.D_E_L_E_T_  <> '*' "
+										cQryProd+= " AND ZZW.ZZW_PRDDE = '"+ PadR(cProduto,TamSx3("ZZW_PRDDE")[1]) +"'"
+										MPSysOpenQuery(cQryProd,"TRBPROD")
+
+										DbSelectArea("TRBPROD")
+										TRBPROD->(DBGOTOP())
+										IF !(TRBPROD->(EOF()))
+											cProduto := PadR(AllTrim(TRBPROD->(PRODPARA)),nTamPrd)
+											cIntegra	:= "S"
+											cStatZZX    := "0"
+											IF TRBPROD->(ESTRUT) == 'S'
+												cGeraOP		:= 'S'
+											ELSE
+												cGeraOP		:= 'N'
+											ENDIF
+											cMsg	:= ""
+										ELSE
+											cStatZZX   := "A"
+											cMsg:= "Não existe DePara"
+										ENDIF
+										
+										RecLock("ZZX", .T.)
+
+											ZZX->ZZX_FILIAL     := xFilial("ZZX")
+											ZZX->ZZX_IDEVEN		:= cCodEvento
+											ZZX->ZZX_NMEVEN 	:= cNmEvento
+											ZZX->ZZX_OPERAC		:= cOperacao
+											ZZX->ZZX_IDPDV      := cIDTrasacao
+											ZZX->ZZX_DATA       := dDataVenda //STOD((cAliasZZV)->CDATA)
+											ZZX->ZZX_HORA		:= cHoraVenda
+											ZZX->ZZX_CPF        := cDocCli
+											IF Empty(cDocCli)
+												ZZX->ZZX_CODCLI        := cCliPad
+												ZZX->ZZX_LOJCLI        := cLojPad
+												IF cStatZZX == "0"
+													cStatZZX:= "1"
+												ENDIF
+											ENDIF
+											ZZX->ZZX_ITEM       := STRZERO(nZ,2)
+											ZZX->ZZX_INTEGR    	:= cIntegra
+											ZZX->ZZX_PRODUT     := cProduto
+											ZZX->ZZX_CATEGO  	:= cCatPRD
+											ZZX->ZZX_QUANT      := nQtdPrd
+											ZZX->ZZX_VLUNIT     := nVlrUnit
+											ZZX->ZZX_TOTAL      := nVlrTot
+											ZZX->ZZX_STATUS     := cStatZZX
+											ZZX->ZZX_JSON		:= sJson
+											ZZX->ZZX_MSG        := cMsg
+											ZZX->ZZX_DTIMPO		:= date()
+											ZZX->ZZX_HRIMPO		:= time()
+											ZZX->ZZX_OPERAD		:= cOperador
+											ZZX->ZZX_CODPON		:= cCodPonto
+											ZZX->ZZX_EMAIL		:= cEmailCli
+											ZZX->ZZX_GERAOP		:= cGeraOP
+											ZZX->ZZX_HISTOR		:= U_HISNETPDV("REGISTRO IMPORTADO",ZZX->ZZX_HISTOR)
+
+										MsUnlock()
+
+										TRBPROD->(dbCloseArea())
+									Next nZ
+								EndIf
+							EndIf
+						ENDIF
+						FreeObj(oTransacao)
+					ENDIF
+				Next nY	
+			EndIf
+		EndIf
+	EndIf
+    FwrestArea(aArea)
+Return()
+
+
+/*/{Protheus.doc} TokenNetPDV
+Obten o token da sessão corrente via NetPDV
+@type function
+@version 1.0
+@author Joalisson Laurentino
+@since 12/03/2022
+/*/
+Static Function TokenNetPDV(cEvento)
+	Local cToken   := ""
+	Local cBody    := ""
+	Local cMsgErro := ""
+	Local cSetPath := SuperGetMV("TF4_APITKN",.F.,"/api/relatorios/GeraToken")
+	Local cParToken:= SuperGetMV("TF4_TKNPDV",.F.,"45F2EE81A2")
+	Local aHeader  := {}
+	Local oToken   := Nil
+	Local oRetorno := Nil
+
+	Default cEvento := "1"
+	
+	oToken := JsonObject():New()
+    oToken["codigo_evento"] := Val(cEvento)
+
+    cBody := EncodeUTF8(oToken:ToJson())
+
+	aAdd(aHeader,'token_parceiro: '+cParToken)
+	
+    aToken := U_T4FFWRestNetPDV("POST",/*cUrl*/,cSetPath,cBody,aHeader)
+
+	If aToken[1]
+		oRetorno := aToken[2]
+
+		If oRetorno["codigo_retorno"] > 0
+			cMsgErro := "Cod. Token Retorno: "+cValtoChar(oRetorno["codigo_retorno"])+" - "+AllTrim(oRetorno["mensagem_erro"])
+		EndIf
+
+		If aScan(oRetorno["dados"]:GetNames(),"token_acesso") > 0
+			cToken  := oRetorno["dados"]["token_acesso"]
+		EndIf
+	EndIf
+Return(cToken)
+
+
+User Function HISNETPDV(cTexto,mHistCpo)
+
+Local cHistor	:= ALLTRIM(DTOC(date()))+" "+SUBSTR(TIME(),1,5)+" -> " + cTexto
+Default mHistCpo	:= ""
+
+
+IF !EMPTY(mHistCpo)
+	cHistor:= cHistor + ENTER + mHistCpo
+ENDIF
+
+Return cHistor

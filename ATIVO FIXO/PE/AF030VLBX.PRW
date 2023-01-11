@@ -1,0 +1,6 @@
+#INCLUDE "PROTHEUS.CH"
+USER FUNCTION AF030VLBX()
+LOCAL cRotina 	:= PARAMIXB[1]
+LOCAL cOpcao	:= PARAMIXB[2]
+ApMsgAlert("Rotina: "+cRotina+CRLF+ "Opção:  "+cOpcao,"AF030VLBX")			
+RETURN .T.

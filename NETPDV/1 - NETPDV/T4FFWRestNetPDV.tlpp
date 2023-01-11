@@ -1,0 +1,98 @@
+#INCLUDE "RestFul.ch"
+#INCLUDE "Protheus.ch"
+#INCLUDE "tlpp-core.th"
+#INCLUDE "TOTVS.ch"
+/*/{Protheus.doc} T4FFWRestNetPDV
+Rotina generica para realizar requisições via API REST ao NetPDV
+@type function
+@version 1.0
+@author Joalisson Laurentino
+@since 04/03/2022
+@param cTipo, 	   	character, "GET" ou "POST" ou "PUT"
+@param cUrl, 	   	character, "http://devapp.netpdv.info:5566/api/relatorios/GeraToken"
+@param cSetPath,   	character, "6d533b03-0e3c-4f88-857a-49bcb6d097c5"
+@param cPostParams, character, "{"rotina":"MATA120"}"
+@param aHeader, 	array, 	   {'Content-Type: application/json'}
+@return variant, aRet[1] := .F.
+                 aRet[2] := 
+                 aRet[3] := cRetorno
+                 aRet[4] := cUrl+cSetPath
+                 aRet[5] := lErro
+                 aRet[6] := lErroConn
+/*/
+User Function T4FFWRestNetPDV(cTipo,cUrl,cSetPath,cPostParams,aHeader)
+    Local aRet        := {"","","","","",""} //Posição 1 indica o sucesso da requisição, Posição 2 traz o retorno da requisição em objeto, 3 json de retorno em string
+	Local nEntry	  := SuperGetMv("T4F_ENTRY",,3)
+	Local nTimeOut	  := SuperGetMv("T4F_TIMEOUT",,120)
+	Local oRest		  := Nil
+	Local oRetorno    := Nil
+	Local nAttempt 	  := 1
+	Local nSecond     := 0
+    Local cRetorno    := "" 
+	Local lRet		  := .F.
+	Local lRest		  := .F.
+	Local lErro 	  := .F.
+    Local lErroConn   := .T.
+
+	Default cTipo      := "POST" 
+	Default cUrl       := SuperGetMv("T4F_URLTOKN",,"https://app.netpdv.com:5566")
+    Default cSetPath   := ""
+    Default cPostParams:= ""
+	Default aHeader    := {}
+
+	aAdd(aHeader,'Content-Type: application/json')
+
+	oRest := FWREST():New(cUrl)
+    oRest:SetPath(cSetPath)
+    oRest:SetPostParams(cPostParams)
+	oRest:nTimeOut := nTimeOut	//tempo em segundos para resposta
+    While (nAttempt <= nEntry)
+		Do Case
+			Case cTipo = "POST"  
+				lRest := oRest:POST(aHeader)                      
+			Case cTipo = "GET"              
+				lRest := oRest:GET(aHeader)
+			Case cTipo = "PUT"              
+				lRest := oRest:PUT(aHeader,cPostParams) 
+		EndCase  
+		
+		If lRest
+			lRet 	  := .T.
+			lErroConn := .F.
+            lErro 	  := .F.
+
+			cRetorno := DecodeUtf8(oRest:GetResult())
+			oRetorno := JsonObject():New()
+			oRetorno:FromJson(oRest:GetResult())
+			
+			Exit
+		Else 
+			cRetorno  := cValtoChar(oRest:GetLAstError())
+            lErroConn := .T.
+            lErro 	  := .T.
+            lRet 	  := .F.
+
+			If (nSecond > 0)
+				Sleep(nSecond * 1000)
+			EndIf
+
+            nAttempt++
+		EndIf
+	EndDo
+	
+	If lRet
+		aRet[1] := .T.
+		aRet[2] := oRetorno
+		aRet[3] := cRetorno
+		aRet[4] := cUrl+cSetPath	
+		aRet[5] := lErro
+		aRet[6] := lErroConn
+	Else
+		aRet[1] := .F.
+		aRet[2] := ""
+		aRet[3] := cRetorno
+		aRet[4] := cUrl+cSetPath
+		aRet[5] := lErro
+		aRet[6] := lErroConn
+	EndIf    
+Return(aRet)

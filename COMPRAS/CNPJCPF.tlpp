@@ -1,0 +1,53 @@
+#INCLUDE "TOTVS.CH"
+#INCLUDE "RWMAKE.CH"
+#INCLUDE "TOPCONN.CH"
+#INCLUDE "COLORS.CH"
+#INCLUDE "FONT.CH"
+
+/*/{Protheus.doc} Tcombo
+Função responsável por alterar o parâmetro MV_VALCNPJ e MV_VALCPF
+@type function 
+@version 1.0
+@author Lucas Valins
+@since 23/02/2021
+@Retuurn 1 caso permita o usuário incluir fornecedores/Clentes
+repetidos porém alterando a loja e 2 para o contrário.
+/*/
+User Function CNPJCPF()
+	Local oDlg1
+	Local aOpcoes1 := {"Permitir","Não Permitir"}
+	Local oCombo
+	Local oButton1, oButton2
+	Local oSay1, oSay2
+	Local cParan := SuperGetMv('MV_USERCON')
+	Public cOpcao := If(SuperGetMv('MV_VALCNPJ')='1','Permitir','Não permitir')
+
+	If cUserNAme$cParan
+		oDlg1 := TDialog():New(0,0,150,213,'Parametro CPNJ/CPF',,,,,CLR_WHITE,CLR_WHITE,,,.T.)
+
+		oSay2 := TSay():New(010,020,{||'Permitir CNPJ/CPF repetidos?'},oDlg1,,,,,,.T.,CLR_BLUE,CLR_WHITE,100,20)
+		oSay1 := TSay():New(027,010,{||'Opções: '},oDlg1,,,,,,.T.,CLR_BLUE,CLR_WHITE,40,10)
+
+		oCombo:= tComboBox():New(002,005,{|u|if(PCount()>0,cOpcao:=u,cOpcao)},aOpcoes1,51,10,oDlg1)
+
+		oButton1   := TButton():New(50, 010, "Confirma", oDlg1,{||test(cOpcao)}, 40,10,,,.F.,.T.,.F.,,.F.,,,.F. )
+		oButton2   := TButton():New(50, 060, "Fechar", oDlg1,{||oDlg1:End()}, 40,10,,,.F.,.T.,.F.,,.F.,,,.F. )
+
+		oDlg1:Activate(,,,.T.)
+	Else
+		MsgAlert('Usuário sem permissão para acessar a rotina','Usuário Sem Permissão')
+	EndIF
+Return
+
+Static Function test(cOpcao)
+	If cOpcao = "Permitir"
+		PutMV("MV_VALCNPJ",'1')
+		PutMV("MV_VALCPF",'1')
+		MsgInfo("<b>Parâmetro liberado para inclusão de fornecedores/clientes com o mesmo CNPJ/CPF e lojas diferentes!</b>","Parâmetro alterado com sucesso!")
+	Else
+		PutMV("MV_VALCNPJ",'2')
+		PutMV("MV_VALCPF",'2')
+		MsgInfo("<b>Parâmetro bloqueado para inclusão de fornecedores/clientes com o mesmo CNPJ/CPF e lojas diferentes!</b>","Parâmetro alterado com sucesso!")
+	EndIF
+Return
+

@@ -1,0 +1,83 @@
+#INCLUDE "TOTVS.ch"
+#INCLUDE "RWMAKE.CH"
+#INCLUDE "PROTHEUS.CH"
+#INCLUDE "TOPCONN.CH"
+#INCLUDE "TOTVS.CH"
+#INCLUDE "Fileio.ch"
+#INCLUDE "dbtree.ch"
+#include "tbiconn.ch"
+#include "PRTOPDEF.CH"
+
+/*/{Protheus.doc} T4FExcNETPDV
+Processa a requisição de todos ExecAuto.
+@type function
+@author Joalisson Laurentino
+@since 30/10/2021
+/*/
+User Function T4PROCNETPDV()
+	Local lEnd		:= .F.
+	Local oGrid	 	:= Nil
+	
+	Local cTitulo	 := "Integração NetPDV x Protheus"
+	Local cDescricao := "Realiza o processamento das transações de vendas do Protheus."
+
+	Private lRet      := .F.
+
+	oGrid := FWGridProcess():New("T4FPROCNETPDV",cTitulo,cDescricao,{|lEnd| xProcExc(oGrid,lEnd)},/*cPergunta*/,/*cGrid*/,/*lSaveLog*/)
+	oGrid:SetMeters(1)
+	oGrid:Activate()
+	If oGrid:IsFinished()
+		FWAlertSuccess("Processamento finalizada com sucesso!", "Sucesso!")
+	//Else
+		//FWAlertError("Erro ao realizar Processamento!","Error!")
+	EndIf
+	oGrid:DeActivate()
+	FwFreeObj(oGrid)
+
+Return
+
+Static Function xProcExc(oGrid,lEnd)
+	Local cIDPDV	:= ""
+	Private cLogMsg   := ""
+	Private cErroNFCe := ""
+	Private cNumero   := ""
+
+	DbSelectArea("ZZX")
+	
+	If Select("ZZX") > 0 .AND. ZZX->(Recno()) <> 0
+		If AllTrim(ZZX->ZZX_OPERAC) <> 'CONSUMO CASHLESS'
+			FWAlertError("Operação não permitida! Registre apenas operações 'CONSUMO CASHLESS'.","Operação não Permitida!")
+			RETURN .F.
+		EndIf
+		If (ZZX->ZZX_STATUS = '4') .or. (ZZX->ZZX_STATUS = '5')
+			FWAlertError("Erro em processamento anteriores! Verifique o motivo do erro e depois faça a exclusão para reprocessar'.","Operação não Permitida!")
+			RETURN .F.
+		EndIf
+	Else
+		FWAlertInfo("Não há registro para ser processado.","T4FNETPDV")
+		RETURN .F.
+	EndIf
+
+	cIDPDV:= ZZX->ZZX_IDPDV
+	cRecnoZZX:= ZZX->(RECNO())
+	
+	IF ZZX->ZZX_STATUS == "0"
+		oGrid:SetIncMeter(1,"Gerando Cliente")
+		lRet:= U_CLINETPDV(cIDPDV)
+		DbSelectArea("ZZX")
+		DBGOTO(cRecnoZZX)
+	ENDIF
+
+	IF ZZX->ZZX_STATUS == "1" .OR. ZZX->ZZX_STATUS == "3" 
+		oGrid:SetIncMeter(1,"Gerando Orçamento")
+		lRet:= U_ORCNETPDV(cIDPDV)
+		DbSelectArea("ZZX")
+		DBGOTO(cRecnoZZX)
+	ENDIF
+
+	IF ZZX->ZZX_STATUS == "2" .OR. ZZX->ZZX_STATUS == "4" 
+		oGrid:SetIncMeter(1,"Gerando Nota Fiscal e transmissão")
+		lRet:= U_T4FNFNetPDV(cEMPANT,cFilANT,"10",,,,ZZX->ZZX_ORC)
+	ENDIF
+	
+Return lRet

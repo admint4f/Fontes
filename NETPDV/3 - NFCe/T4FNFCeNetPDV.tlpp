@@ -1,0 +1,156 @@
+#INCLUDE "LOJA701C.CH"
+#INCLUDE "PROTHEUS.CH"
+#INCLUDE "CRDDEF.CH"
+#INCLUDE "AUTODEF.CH"
+#INCLUDE "PROTHEUS.CH"
+#INCLUDE "TBICONN.CH"
+#INCLUDE "LOJXFUNC.CH"
+#INCLUDE "CRDDEF.CH"
+#INCLUDE "FWADAPTEREAI.CH"
+#INCLUDE "TOPCONN.CH"
+#INCLUDE "RWMAKE.CH"
+#INCLUDE "TOTVS.CH"
+#INCLUDE "Fileio.ch"
+#INCLUDE "dbtree.ch"
+
+
+Static cEmpUse     := "20"
+Static cFilUse     := "01"
+
+User Function JBNFCENETPDV()
+
+    Local aSM0          := {}
+    Local i             := 0
+    Local nOrcExec      := 0
+    Local nJobSimult    := 1
+    
+    PREPARE ENVIRONMENT EMPRESA cEmpUse FILIAL cFilUse MODULO "LOJA"
+        aSM0 := {}
+	    aadd(aSM0,{"20","01"})      //Empresa 20 - Filial 01
+    RESET ENVIRONMENT
+
+
+    For i:=1 to len(aSM0)
+        nOrcExec := 0
+        RPCSetType(3)
+        PREPARE ENVIRONMENT EMPRESA aSM0[i][1] FILIAL aSM0[i][2] MODULO "LOJA"
+            cQuery := " SELECT * "
+            cQuery += " FROM "
+            cQuery += "		"+RetSQLName( "SL1" )+" SL1 "
+            cQuery += " WHERE "
+            cQuery += "		SL1.D_E_L_E_T_ <> '*' "
+            cQuery += "		AND SL1.L1_SITUA = 'OK' "
+            cQuery += "		AND SL1.L1_FILIAL = '"+aSM0[i][2]+"' "
+            cQuery += "		AND SL1.L1_SERIE = '2  ' "
+			cQuery += "		AND SL1.L1_EMISSAO >= '20220404' "
+			cQuery += "		AND L1_RETSFZ NOT LIKE '%100|Autorizado%' "
+            cQuery += " ORDER BY L1_NUM "
+            TCQuery cQuery New Alias "SL1NFCE"
+
+            SL1NFCE->(DbGoTop())
+            Count To nOrcExec
+            SL1NFCE->(DbGoTop())
+
+            lLjGrvOn  := SuperGetMV("MV_LJGRVON", Nil, .T.)
+
+            if nOrcExec > 0 
+				While SL1NFCE->(!EOF())
+					DbSelectArea("SL1")           
+					DbSetOrder(1)
+					DBGOTOP()
+					IF dbseek(xFilial("SL1")+SL1NFCE->L1_NUM)
+						U_T4FNFCeNetPDV(SL1->L1_FILIAL, SL1->L1_NUM, SL1->L1_DOC, SL1->L1_SERIE, SL1->L1_PDV)
+					ENDIF
+					SL1NFCE->(DBSKIP())
+				END
+            EndIf
+
+            SL1NFCE->(dbCloseArea())
+
+        RESET ENVIRONMENT
+    Next i
+
+Return (.T.)
+
+
+//------------------------
+/*/{Protheus.doc} T4FNFCeNetPDV
+Efetua a transmissão da NFC-e para o TSS (TSS->Sefaz).
+@Type Function
+@param   cCodFil	, caracter , Filial da venda realizada
+@param   cNumOrc	, caracter , Numero do orçamento
+@param   cDoc		, caracter , Numero do documento Nfc-e
+@param   cSerie		, caracter , Serie do documento Nfc-e
+@param   cPDV		, caracter , Pdv da venda
+@param   lTefOk		, lógico , Operação TEF
+@param   cKeyNFCe	, caracter , Chave de acesso NFc-e TSS
+@author  Varejo
+@version P11
+@since   07/01/2015
+@return  lNFCeRet	, lógico , .T. = Sucesso na transmissão / .F. = Erro na transmissão da NFC-e
+/*/
+//------------------------
+User Function T4FNFCeNetPDV( cCodFil, cNumOrc, cDoc, cSerie,cPDV, lTefOk, cKeyNFCe, cMsgErro )
+//SL1->L1_FILIAL, SL1->L1_NUM, SL1->L1_DOC, SL1->L1_SERIE, SL1->L1_PDV)
+	Local nNFCeRet	:= 0
+	Local lNFCeRet	:= .T.
+	Local aNfceSL1	:= {}
+	Local lAutoExC	:= IsBlind()	// Verifica se a rotina sera executada via execauto ou nao
+	Local lLjGrvOn  := SuperGetMV("MV_LJGRVON", Nil, .T.)
+	Local nNccUsada := 0
+	//Local aAreaSL1  := SL1->( GetArea() )
+	//Local aAreaZZV  := ZZV->( GetArea() )
+
+	Default cCodFil	:= ""
+	Default cNumOrc	:= ""
+	Default cDoc	:= ""
+	Default cSerie	:= ""
+	Default cPDV	:= ""
+	Default lTEFOk	:= .T.
+	Default cKeyNFCe:= ""
+	Default cMsgErro:= ""
+
+	//cStatus:= "6"
+	//Processa a NFC-e
+	nNFCeRet := LjNFCeGera(cCodFil, cNumOrc, @cKeyNFCe, Nil, Nil, @cMsgErro)
+
+	LjGrvLog(cNumOrc,"Retorno do envio da transmissao da NFC-e ",nNFCeRet)
+	LjGrvLog(cNumOrc,"Chave gerada na transmissao da NFC-e ",cKeyNFCe)
+
+	aNFCeSL1 := { {"L1_KEYNFCE" , cKeyNfce	} }
+	Lj7GeraSL("SL1", aNfceSL1, .F.)
+
+	/*
+	Situacoes nNFCeRet:
+	( 1 ) > NFC-e processada com sucesso
+	( 0 ) >	NFC-e enviada para o TSS, porem nao houve resposta do TSS (TSS offline)
+	(-1 ) > NFC-e rejeitada
+	*/
+
+	If nNFCeRet <> 1
+		lNFCeRet := .F.
+
+		If !lAutoExC
+			Aviso(STR0147,STR0196,,,,,,,30000)//"Atenção"//"Houve problema na transmissão da NFC-e. Por favor, efetuar as devidas alterações ou gravar este como orçamento." 
+		Else
+			ConOut(STR0196 + "(Orc: " + SL1->L1_NUM + " - Doc.: " + cDoc + ")") //"Houve problema na transmissão da NFC-e. Por favor, efetuar as devidas alterações ou gravar este como orçamento."
+		EndIf
+		//cStatus:= "X"
+		cMsgErro += STR0196 + "(Orc: " + SL1->L1_NUM + " - Doc.: " + cDoc + ") Cod. Erro: "+cValToChar(nNFCeRet)
+
+		LjGrvLog(cNumOrc,"NFCe ERRO :",cMsgErro)
+	ElseIf !lLjGrvOn .AND. nNccUsada > 0 .And. !IsInCallStack("Lj7Pedido")
+		
+		// A função LjBaixaNCC devera ser executada quando o sistema estiver configurado para emissao da NFC-e
+		// Pois nesse caso, o sistema nao efetua a venda de forma sincrona, sendo assim, quando se paga uma venda com
+		// uma NCC, a baixa da mesma deve ser realizada, antes do processamento da venda que eh realizado pelo LjGrvBatch
+
+		//Efetua a baixa da(s) NCC(s) utilizada(s) na venda e gera nova NCC se necessário.
+		LjBaixaNCC()
+	EndIf
+
+	//limpa o objeto oNFCe que é instanciado no LOJNFCE.PRW
+	LjNFCeFree()
+	//FWRestArea(aAreaZZV)
+	//FWRestArea(aAreaSL1)
+Return cMsgErro
